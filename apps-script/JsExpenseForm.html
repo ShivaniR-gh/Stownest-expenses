@@ -1,0 +1,232 @@
+<script>
+/* =====================================================================
+ * ExpenseForm — one form used by both "Add Expense" and the Edit modal,
+ * so the fields, dropdown rules and validation live in a single place.
+ * ===================================================================== */
+const ExpenseForm = (function () {
+  const MAX_FILE_MB = 5;
+  const ALLOWED_TYPES = { 'application/pdf': 'PDF', 'image/jpeg': 'JPG', 'image/png': 'PNG' };
+
+  /** On edit, keep a value that was later removed from the sheet so the dropdown can still show it. */
+  /** "Other …" categories have no fixed types: the user names the expense instead. */
+  const isOther = name => /^other/i.test(String(name || ''));
+
+  const withCurrent = (values, current) => (current && values.indexOf(current) === -1 ? values.concat([current]) : values);
+
+  function template(isEdit, hasPreset, hasCancel) {
+    const req = '<span class="req">*</span>';
+    return '' +
+      '<form class="expense-form" novalidate>' +
+      '<div class="form-grid">' +
+        '<div class="form-section">' + (hasPreset ? 'Details' : 'Expense details') + '</div>' +
+        '<label class="field"><span>Expense Date ' + req + '</span><input type="date" name="date" required></label>' +
+        '<label class="field"><span>Amount ' + req + '</span><div class="amount-input"><input type="number" name="amount" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" required></div></label>' +
+        '<label class="field"><span>Payment Mode ' + req + '</span><select name="paymentMode" required></select></label>' +
+        '<label class="field cat-field"><span>Main Category ' + req + '</span><select name="mainCategory" required></select></label>' +
+        '<label class="field cat-field sub-field"><span>Subcategory <span class="req sub-req">*</span></span><select name="subcategory"></select></label>' +
+        '<label class="field span-3 other-field" hidden><span>Expense name ' + req + '</span><input type="text" name="otherName" maxlength="100" placeholder="e.g. Pooja items, AC service, Diwali sweets"></label>' +
+        '<label class="field span-3"><span>Description ' + req + '</span><input type="text" name="description" maxlength="500" placeholder="What was this expense for?" required></label>' +
+
+        '<div class="form-section">Location</div>' +
+        '<label class="field"><span>City ' + req + '</span><select name="city" required></select></label>' +
+        '<label class="field"><span>Warehouse / Office ' + req + '</span><select name="warehouse" required></select></label>' +
+        '<label class="field"><span>Department ' + req + '</span><select name="department" required></select></label>' +
+
+        '<div class="form-section">Vendor & bill</div>' +
+        '<label class="field"><span>Vendor / Supplier Name</span><input type="text" name="vendor" maxlength="150"></label>' +
+        '<label class="field"><span>Invoice Number</span><input type="text" name="invoiceNumber" maxlength="100"></label>' +
+        '<label class="field"><span>Remarks</span><input type="text" name="remarks" maxlength="1000" placeholder="Optional"></label>' +
+
+        '<div class="field span-3"><span>' + (isEdit ? 'Replace Bill / Invoice / Receipt' : 'Upload Bill / Invoice / Receipt') + '</span>' +
+          '<label class="dropzone">' +
+            '<input type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png">' +
+            '<span class="dropzone-icon">⇪</span>' +
+            '<span class="dropzone-text"><strong>Click to choose a file or drag it here</strong>' +
+            '<span>Optional · PDF, JPG or PNG · up to ' + MAX_FILE_MB + ' MB</span></span>' +
+            '<span class="file-chip" hidden><span class="file-name"></span><button type="button" class="file-clear" aria-label="Remove file">✕</button></span>' +
+          '</label>' +
+          '<span class="current-bill small muted"></span>' +
+        '</div>' +
+      '</div>' +
+      '<p class="form-error" hidden></p>' +
+      '<div class="form-actions">' +
+        (hasCancel ? '<button type="button" class="btn btn-ghost js-cancel">Cancel</button>'
+          : isEdit ? '<button type="button" class="btn btn-ghost" data-close>Cancel</button>'
+          : '<button type="reset" class="btn btn-ghost">Clear</button>') +
+        '<button type="submit" class="btn btn-primary">' + (isEdit ? 'Save changes' : 'Save expense') + '</button>' +
+      '</div>' +
+      '</form>';
+  }
+
+  /**
+   * Renders the form into `host`.
+   * options.expense  — existing record when editing (omit for a new expense)
+   * options.onSaved  — called with the saved record returned by the backend
+   * options.preset   — { mainCategory, subcategory } already chosen from the tiles;
+   *                    the category fields are then filled in and hidden
+   * options.onCancel — shows a Cancel button that calls this (used by the tile flow)
+   */
+  function render(host, options) {
+    const exp = options.expense || null;
+    const preset = options.preset || null;
+    host.innerHTML = template(!!exp, !!preset, !!options.onCancel);
+    const form = U.$('form', host);
+    const f = name => form.elements[name];
+    let file = null;
+
+    // ----- dropdowns -----
+    U.fillSelect(f('mainCategory'), withCurrent(Store.categoryNames(), (exp && exp.mainCategory) || (preset && preset.mainCategory)), 'Select category');
+    U.fillSelect(f('city'), withCurrent(Store.lists.cities, exp && exp.city), 'Select city');
+    U.fillSelect(f('department'), withCurrent(Store.lists.departments, exp && exp.department), 'Select department');
+    U.fillSelect(f('paymentMode'), withCurrent(Store.lists.paymentModes, exp && exp.paymentMode), 'Select payment mode');
+
+    function refreshSubcategories(keep) {
+      const subs = withCurrent(Store.subcategoriesOf(f('mainCategory').value), keep);
+      const sel = f('subcategory');
+      const hasCategory = !!f('mainCategory').value;
+      const other = isOther(f('mainCategory').value);
+      U.$('.other-field', form).hidden = !other;
+      if (!hasCategory) { U.fillSelect(sel, [], 'Select a category first'); sel.disabled = true; }
+      else if (!subs.length) { U.fillSelect(sel, [], ''); sel.disabled = true; }
+      else { U.fillSelect(sel, subs, 'Select subcategory', keep); sel.disabled = false; }
+      // Categories without types (e.g. Warehouse Rent) don't show the field at all
+      U.$('.sub-field', form).hidden = !!preset || other || (hasCategory && !subs.length);
+      U.$('.sub-req', form).hidden = sel.disabled;
+    }
+    function refreshWarehouses(keep) {
+      const city = f('city').value;
+      const names = withCurrent(Store.warehousesFor(city), keep);
+      const sel = f('warehouse');
+      if (!city) { U.fillSelect(sel, [], 'Select a city first'); sel.disabled = true; return; }
+      U.fillSelect(sel, names, names.length ? 'Select warehouse / office' : 'None set up for this city', keep);
+      sel.disabled = !names.length;
+    }
+    f('mainCategory').addEventListener('change', () => refreshSubcategories(''));
+    f('city').addEventListener('change', () => refreshWarehouses(''));
+
+    // ----- initial values -----
+    function fill(values) {
+      ['date', 'mainCategory', 'city', 'department', 'description', 'amount', 'vendor',
+       'paymentMode', 'invoiceNumber', 'remarks'].forEach(k => { f(k).value = values[k] === undefined ? '' : values[k]; });
+      refreshSubcategories(values.subcategory || '');
+      f('otherName').value = isOther(values.mainCategory) ? (values.subcategory || '') : '';
+      refreshWarehouses(values.warehouse || '');
+    }
+    const blank = () => Object.assign({ date: U.today() }, preset || {});
+    fill(exp || blank());
+    if (preset) U.$$('.cat-field', form).forEach(el => { el.hidden = true; });
+    if (options.onCancel) U.$('.js-cancel', form).addEventListener('click', options.onCancel);
+    if (exp && exp.billLink) {
+      U.$('.current-bill', form).innerHTML = 'Current bill: <a class="bill-link" target="_blank" rel="noopener" href="' +
+        U.esc(exp.billLink) + '">View</a> — choosing a new file replaces it.';
+    }
+
+    // ----- file picker -----
+    const fileInput = f('file');
+    const dropzone = U.$('.dropzone', form);
+    function setFile(selected) {
+      file = null;
+      clearFieldError(dropzone.parentElement);
+      if (selected) {
+        const err = checkFile(selected);
+        if (err) { fieldError(dropzone.parentElement, err); fileInput.value = ''; }
+        else file = selected;
+      }
+      U.$('.file-chip', form).hidden = !file;
+      U.$('.file-name', form).textContent = file ? file.name + ' · ' + (file.size / 1048576).toFixed(2) + ' MB' : '';
+    }
+    fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
+    U.$('.file-clear', form).addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); fileInput.value = ''; setFile(null); });
+    ['dragenter', 'dragover'].forEach(t => dropzone.addEventListener(t, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
+    ['dragleave', 'drop'].forEach(t => dropzone.addEventListener(t, e => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+    dropzone.addEventListener('drop', e => setFile(e.dataTransfer.files[0]));
+
+    // Clear a field's error as soon as the user fixes it
+    ['input', 'change'].forEach(t => form.addEventListener(t, e => {
+      const field = e.target.closest('.field');
+      if (field && field.classList.contains('invalid') && e.target.name !== 'file') clearFieldError(field);
+    }));
+
+    form.addEventListener('reset', () => setTimeout(() => { setFile(null); clearErrors(); fill(blank()); }));
+
+    // ----- submit -----
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      clearErrors();
+      const values = readValues();
+      if (!validate(values)) return;
+
+      const btn = U.$('button[type=submit]', form);
+      U.busy(btn, true);
+      try {
+        if (file) values.file = { name: file.name, mimeType: file.type, base64: await U.fileToBase64(file) };
+        let saved;
+        if (exp) {
+          values.id = exp.id;
+          values.updatedAt = exp.updatedAt; // lets the backend detect someone else's edit
+          saved = await Api.updateExpense(values);
+        } else {
+          saved = await Api.addExpense(values);
+        }
+        Store.upsert(saved);
+        options.onSaved(saved);
+      } catch (err) {
+        showError(err.code === 'CONFLICT' ? err.message + ' Use "Refresh data" in the sidebar.' : err.message);
+      } finally {
+        U.busy(btn, false);
+      }
+    });
+
+    function readValues() {
+      const v = {};
+      ['date', 'mainCategory', 'subcategory', 'city', 'warehouse', 'department', 'description',
+       'amount', 'vendor', 'paymentMode', 'invoiceNumber', 'remarks'].forEach(k => { v[k] = String(f(k).value || '').trim(); });
+      if (f('subcategory').disabled) v.subcategory = '';
+      if (isOther(v.mainCategory)) v.subcategory = String(f('otherName').value || '').trim();
+      return v;
+    }
+
+    /** Mirrors the backend rules so users get instant feedback. The backend still re-checks everything. */
+    function validate(v) {
+      let ok = true;
+      const need = (name, msg) => { if (!v[name]) { fieldError(f(name).closest('.field'), msg); ok = false; } };
+      need('date', 'Choose the expense date.');
+      need('mainCategory', 'Choose a category.');
+      if (!f('subcategory').disabled) need('subcategory', 'Choose a subcategory.');
+      if (isOther(v.mainCategory) && !v.subcategory) { fieldError(f('otherName').closest('.field'), 'Give this expense a name.'); ok = false; }
+      need('city', 'Choose a city.');
+      if (!f('warehouse').disabled || f('city').value) need('warehouse', 'Choose a warehouse.');
+      need('department', 'Choose a department.');
+      need('description', 'Add a short description.');
+      need('paymentMode', 'Choose a payment mode.');
+      const amt = Number(v.amount);
+      if (!v.amount || !isFinite(amt) || amt <= 0) { fieldError(f('amount').closest('.field'), 'Enter an amount greater than zero.'); ok = false; }
+      else if (!/^\d+(\.\d{1,2})?$/.test(v.amount)) {
+        fieldError(f('amount').closest('.field'), 'Use at most 2 decimal places.'); ok = false;
+      }
+      if (!ok) { const first = U.$('.field.invalid input, .field.invalid select', form); if (first) first.focus(); }
+      return ok;
+    }
+
+    function fieldError(field, msg) {
+      field.classList.add('invalid');
+      const s = document.createElement('span'); s.className = 'field-error'; s.textContent = msg;
+      field.appendChild(s);
+    }
+    function clearFieldError(field) { field.classList.remove('invalid'); U.$$('.field-error', field).forEach(n => n.remove()); }
+    function clearErrors() { U.$$('.field', form).forEach(clearFieldError); U.$('.form-error', form).hidden = true; }
+    function showError(msg) { const p = U.$('.form-error', form); p.textContent = msg; p.hidden = false; p.scrollIntoView({ block: 'nearest' }); }
+
+    return form;
+  }
+
+  function checkFile(file) {
+    if (!ALLOWED_TYPES[file.type]) return 'Only PDF, JPG and PNG files are allowed.';
+    if (file.size > MAX_FILE_MB * 1048576) return 'File is larger than ' + MAX_FILE_MB + ' MB.';
+    if (file.size === 0) return 'File is empty.';
+    return '';
+  }
+
+  return { render };
+})();
+</script>

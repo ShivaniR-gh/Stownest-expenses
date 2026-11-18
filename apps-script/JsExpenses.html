@@ -1,0 +1,262 @@
+<script>
+/* =====================================================================
+ * Filters — shared toolbar used by All Expenses and Reports.
+ * A toolbar holds inputs with data-f="q|from|to|category|city|warehouse|department"
+ * (some inside popovers). Below it, a chip row shows each active filter.
+ * ===================================================================== */
+const Filters = (function () {
+  const LABELS = { category: 'Category', city: 'City', warehouse: 'Location', department: 'Department' };
+  const pad = n => String(n).padStart(2, '0');
+  const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+
+  /** Date presets in local time. Financial year = April to March (India). */
+  function presetRange(key) {
+    const now = new Date(), y = now.getFullYear(), m = now.getMonth();
+    const fyStart = m >= 3 ? y : y - 1;
+    switch (key) {
+      case 'this-month': return [iso(new Date(y, m, 1)), iso(new Date(y, m + 1, 0))];
+      case 'last-month': return [iso(new Date(y, m - 1, 1)), iso(new Date(y, m, 0))];
+      case 'last-3':     return [iso(new Date(y, m - 2, 1)), iso(new Date(y, m + 1, 0))];
+      case 'this-fy':    return [iso(new Date(fyStart, 3, 1)), iso(new Date(fyStart + 1, 2, 31))];
+      case 'last-fy':    return [iso(new Date(fyStart - 1, 3, 1)), iso(new Date(fyStart, 2, 31))];
+      default:           return ['', ''];
+    }
+  }
+  const PRESET_NAMES = { 'this-month': 'This month', 'last-month': 'Last month', 'last-3': 'Last 3 months',
+    'this-fy': 'This financial year', 'last-fy': 'Last financial year' };
+
+  function dateLabel(from, to) {
+    if (!from && !to) return 'All dates';
+    const hit = Object.keys(PRESET_NAMES).find(k => { const r = presetRange(k); return r[0] === from && r[1] === to; });
+    if (hit) return PRESET_NAMES[hit];
+    if (from && to) return U.dateLabel(from) + ' – ' + U.dateLabel(to);
+    return from ? 'From ' + U.dateLabel(from) : 'Until ' + U.dateLabel(to);
+  }
+
+  const el = (bar, name) => U.$('[data-f="' + name + '"]', bar);
+
+  return {
+    presetRange,
+    dateLabel,
+    /** Fill the dropdowns from Store; the location list follows the chosen city. */
+    populate(bar) {
+      if (el(bar, 'category')) U.fillSelect(el(bar, 'category'), Store.categoryNames(), 'All categories');
+      if (el(bar, 'city')) U.fillSelect(el(bar, 'city'), Store.lists.cities, 'All cities');
+      if (el(bar, 'department')) U.fillSelect(el(bar, 'department'), Store.lists.departments, 'All departments');
+      this.syncWarehouses(bar);
+      this.refreshUi(bar);
+    },
+    syncWarehouses(bar) {
+      const wh = el(bar, 'warehouse'), city = el(bar, 'city');
+      if (wh) U.fillSelect(wh, city && city.value ? Store.warehousesFor(city.value) : Store.allWarehouseNames(), 'All locations');
+    },
+    read(bar) {
+      const f = {};
+      U.$$('[data-f]', bar).forEach(i => { f[i.dataset.f] = i.value.trim(); });
+      return f;
+    },
+    set(bar, name, value) { const i = el(bar, name); if (i) i.value = value; if (name === 'city') this.syncWarehouses(bar); },
+    reset(bar) { U.$$('[data-f]', bar).forEach(i => { i.value = ''; }); this.syncWarehouses(bar); this.refreshUi(bar); },
+
+    /** Empty values are skipped — they never mean "match nothing". */
+    apply(rows, f) {
+      const q = (f.q || '').toLowerCase();
+      return rows.filter(r =>
+        (!f.from || r.date >= f.from) &&
+        (!f.to || r.date <= f.to) &&
+        (!f.category || r.mainCategory === f.category) &&
+        (!f.city || r.city === f.city) &&
+        (!f.warehouse || r.warehouse === f.warehouse) &&
+        (!f.department || r.department === f.department) &&
+        (!q || [r.id, r.description, r.vendor, r.invoiceNumber, r.subcategory, r.mainCategory, r.remarks]
+          .some(v => String(v || '').toLowerCase().indexOf(q) !== -1)));
+    },
+    describe(f) {
+      const parts = [];
+      if (f.from || f.to) parts.push(dateLabel(f.from, f.to));
+      ['category', 'city', 'warehouse', 'department'].forEach(k => { if (f[k]) parts.push(f[k]); });
+      return parts.length ? parts.join(' · ') : 'All data';
+    },
+
+    /** Button labels, the Filters count badge, and the chip row under the toolbar. */
+    refreshUi(bar) {
+      const f = this.read(bar);
+      const dateBtn = U.$('[data-pop="date"] .tb-btn', bar);
+      U.$('.tb-date-label', bar).textContent = dateLabel(f.from, f.to);
+      dateBtn.classList.toggle('on', !!(f.from || f.to));
+      const active = Object.keys(LABELS).filter(k => f[k] !== undefined && f[k]);
+      const count = U.$('.tb-count', bar);
+      count.textContent = active.length; count.hidden = !active.length;
+      U.$('[data-pop="more"] .tb-btn', bar).classList.toggle('on', active.length > 0);
+
+      const chips = [];
+      if (f.from || f.to) chips.push({ key: 'date', text: dateLabel(f.from, f.to) });
+      active.forEach(k => chips.push({ key: k, text: LABELS[k] + ': ' + f[k] }));
+      const host = bar.nextElementSibling;
+      host.innerHTML = chips.map(c => '<span class="fchip">' + U.esc(c.text) +
+        '<button type="button" data-remove="' + c.key + '" aria-label="Remove filter">✕</button></span>').join('') +
+        (chips.length > 1 ? '<button type="button" class="link-btn" data-remove="all">Clear all</button>' : '');
+      host.hidden = !chips.length;
+    },
+
+    /** Wire up popovers, presets, chips. `onChange` re-renders the page. */
+    bind(bar, onChange) {
+      const chipHost = bar.nextElementSibling;
+      const changed = () => { this.refreshUi(bar); onChange(); };
+      const closeAll = except => U.$$('.pop.open', bar).forEach(p => { if (p !== except) p.classList.remove('open'); });
+      let t;
+
+      U.$$('[data-f]', bar).forEach(i => {
+        i.addEventListener(i.type === 'search' ? 'input' : 'change', () => {
+          if (i.dataset.f === 'city') this.syncWarehouses(bar);
+          clearTimeout(t); t = setTimeout(changed, i.type === 'search' ? 200 : 0);
+        });
+      });
+      bar.addEventListener('click', e => {
+        const toggle = e.target.closest('[data-toggle]');
+        if (toggle) {
+          const p = toggle.closest('.pop'); closeAll(p); p.classList.toggle('open');
+          // open leftwards when the panel would run off the right edge of the screen
+          const panel = U.$('.pop-panel', p); panel.classList.remove('align-right');
+          if (p.classList.contains('open') && panel.getBoundingClientRect().right > window.innerWidth - 12) panel.classList.add('align-right');
+          return;
+        }
+        const preset = e.target.closest('[data-preset]');
+        if (preset) { const r = presetRange(preset.dataset.preset); this.set(bar, 'from', r[0]); this.set(bar, 'to', r[1]); closeAll(); changed(); return; }
+        if (e.target.closest('[data-clear]')) { ['category', 'city', 'warehouse', 'department'].forEach(k => this.set(bar, k, '')); changed(); return; }
+        if (e.target.closest('[data-done]')) closeAll();
+      });
+      chipHost.addEventListener('click', e => {
+        const b = e.target.closest('[data-remove]');
+        if (!b) return;
+        const k = b.dataset.remove;
+        if (k === 'all') { const q = el(bar, 'q') ? el(bar, 'q').value : ''; this.reset(bar); if (el(bar, 'q')) el(bar, 'q').value = q; }
+        else if (k === 'date') { this.set(bar, 'from', ''); this.set(bar, 'to', ''); }
+        else { this.set(bar, k, ''); if (k === 'city') this.set(bar, 'warehouse', ''); }
+        changed();
+      });
+      document.addEventListener('click', e => { if (!bar.contains(e.target)) closeAll(); });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
+    },
+  };
+})();
+
+/* =====================================================================
+ * Modal — one dialog reused for "details" and "edit".
+ * ===================================================================== */
+const Modal = {
+  open(title, html) {
+    U.$('#modal-title').textContent = title;
+    U.$('#modal-body').innerHTML = html || '';
+    U.$('#modal').hidden = false;
+    return U.$('#modal-body');
+  },
+  close() { U.$('#modal').hidden = true; U.$('#modal-body').innerHTML = ''; },
+};
+document.addEventListener('click', e => { if (e.target.closest('[data-close]')) Modal.close(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !U.$('#modal').hidden) Modal.close(); });
+
+/* =====================================================================
+ * Expenses page — searchable, filterable table with details + edit.
+ * ===================================================================== */
+const Expenses = (function () {
+  const PAGE_SIZE = 25;
+  let page = 1;
+  let bound = false;
+
+  function init() {
+    const bar = U.$('#exp-filters');
+    Filters.populate(bar);
+    if (bound) return;
+    bound = true;
+    Filters.bind(bar, () => { page = 1; render(); });
+    U.$('#exp-body').addEventListener('click', e => {
+      if (e.target.closest('a')) return;                 // bill link opens Drive
+      const btn = e.target.closest('[data-act]');
+      const row = e.target.closest('tr[data-id]');
+      const exp = row && Store.expenses.find(x => x.id === row.dataset.id);
+      if (!exp) return;
+      if (btn && btn.dataset.act === 'edit') showEdit(exp); else showDetails(exp); // clicking the row = details
+    });
+    U.$('#exp-pager').addEventListener('click', e => {
+      const b = e.target.closest('[data-page]');
+      if (b) { page = Number(b.dataset.page); render(); }
+    });
+  }
+
+  function render() {
+    const rows = Filters.apply(Store.expenses, Filters.read(U.$('#exp-filters')));
+    const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+    page = Math.min(page, pages);
+    const slice = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+    U.$('#exp-count').textContent = rows.length === Store.expenses.length ? rows.length + ' expenses' : rows.length + ' of ' + Store.expenses.length + ' expenses';
+    U.$('#exp-total').textContent = U.money(U.sum(rows));
+
+    const ICON_BILL = '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>';
+    const ICON_EYE = '<svg viewBox="0 0 24 24"><path d="M12 5C6.5 5 2.7 9.3 1.5 12c1.2 2.7 5 7 10.5 7s9.3-4.3 10.5-7C21.3 9.3 17.5 5 12 5zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>';
+    const ICON_EDIT = '<svg viewBox="0 0 24 24"><path d="M3 17.2V21h3.8L17.8 9.9l-3.7-3.7L3 17.2zM20.7 7a1 1 0 0 0 0-1.4l-2.3-2.3a1 1 0 0 0-1.4 0l-1.8 1.8 3.7 3.7L20.7 7z"/></svg>';
+    const sub = v => '<div class="sub">' + (v ? U.esc(v) : '—') + '</div>';
+
+    U.$('#exp-body').innerHTML = slice.length ? slice.map(r =>
+      '<tr class="row-link" data-id="' + U.esc(r.id) + '">' +
+        '<td><div class="id">' + U.esc(r.id) + '</div>' + sub(U.dateLabel(r.date)) + '</td>' +
+        '<td class="cat-cell"><span class="badge" title="' + U.esc(r.mainCategory) + '">' + U.esc(r.mainCategory) + '</span>' + (r.subcategory ? sub(r.subcategory) : '') + '</td>' +
+        '<td class="loc-cell" title="' + U.esc(r.city + ' · ' + r.warehouse) + '"><div>' + U.esc(r.city) + '</div>' + sub(r.warehouse) + '</td>' +
+        '<td class="clip-cell"><div class="clip" title="' + U.esc(r.description) + '">' + U.esc(r.description) + '</div>' + sub(r.vendor) + '</td>' +
+        '<td><div>' + U.esc(r.paymentMode) + '</div>' + sub(r.invoiceNumber) + '</td>' +
+        '<td class="num amount">' + U.money(r.amount) + '</td>' +
+        '<td class="center">' + (r.billLink ? '<a class="icon-link" target="_blank" rel="noopener" title="View bill" href="' + U.esc(r.billLink) + '">' + ICON_BILL + '</a>' : '<span class="muted">—</span>') + '</td>' +
+        '<td><div class="actions">' +
+          '<button class="icon-act" data-act="view" data-id="' + U.esc(r.id) + '" title="Details" aria-label="Details">' + ICON_EYE + '</button>' +
+          '<button class="icon-act" data-act="edit" data-id="' + U.esc(r.id) + '" title="Edit" aria-label="Edit">' + ICON_EDIT + '</button>' +
+        '</div></td>' +
+      '</tr>').join('')
+      : '<tr><td colspan="8" class="empty">' + (Store.expenses.length ? 'No expenses match these filters.' : 'No expenses recorded yet. Use “Add Expense” to create the first one.') + '</td></tr>';
+
+    U.$('#exp-pager').innerHTML = pages > 1
+      ? '<button class="btn btn-ghost btn-sm" data-page="' + (page - 1) + '"' + (page === 1 ? ' disabled' : '') + '>‹ Prev</button>' +
+        '<span class="muted">Page ' + page + ' of ' + pages + '</span>' +
+        '<button class="btn btn-ghost btn-sm" data-page="' + (page + 1) + '"' + (page === pages ? ' disabled' : '') + '>Next ›</button>'
+      : '';
+  }
+
+  function showDetails(r) {
+    const item = (label, value, wide) => '<div' + (wide ? ' class="wide"' : '') + '><dt>' + label + '</dt><dd>' + (value || '<span class="muted">—</span>') + '</dd></div>';
+    const body = Modal.open('Expense ' + r.id,
+      '<dl class="details">' +
+        item('Expense Date', U.esc(U.dateLabel(r.date))) +
+        item('Amount', '<strong>' + U.money(r.amount) + '</strong>') +
+        item('Payment Mode', U.esc(r.paymentMode)) +
+        item('Main Category', U.esc(r.mainCategory)) +
+        item('Subcategory', U.esc(r.subcategory)) +
+        item('Department', U.esc(r.department)) +
+        item('City', U.esc(r.city)) +
+        item('Warehouse / Office', U.esc(r.warehouse)) +
+        item('Vendor / Supplier', U.esc(r.vendor)) +
+        item('Invoice Number', U.esc(r.invoiceNumber)) +
+        item('Bill', r.billLink ? '<a class="bill-link" target="_blank" rel="noopener" href="' + U.esc(r.billLink) + '">Open in Google Drive</a>' : '') +
+        item('Created / Updated', U.esc(r.createdAt) + '<br><span class="muted small">' + U.esc(r.updatedAt) + '</span>') +
+        item('Description', U.esc(r.description), true) +
+        item('Remarks', U.esc(r.remarks), true) +
+      '</dl>' +
+      '<div class="details-actions"><button class="btn btn-ghost" data-close>Close</button>' +
+      '<button class="btn btn-primary" id="details-edit">Edit expense</button></div>');
+    U.$('#details-edit', body).addEventListener('click', () => showEdit(r));
+  }
+
+  function showEdit(r) {
+    const body = Modal.open('Edit ' + r.id);
+    ExpenseForm.render(body, {
+      expense: r,
+      onSaved: saved => {
+        Modal.close();
+        U.toast('Expense ' + saved.id + ' updated.', 'success');
+        App.dataChanged();
+      },
+    });
+  }
+
+  return { init, render, showDetails };
+})();
+</script>

@@ -1,0 +1,72 @@
+<script>
+/* =====================================================================
+ * Api — the only place that talks to the backend.
+ * Wraps google.script.run in a Promise so pages can use async/await,
+ * and turns every backend answer into either a value or an Error.
+ * ===================================================================== */
+const Api = (function () {
+  const TOKEN_KEY = 'sn_exp_token';
+  let onAuthLost = function () {};
+
+  function call(action, extra) {
+    const request = Object.assign({ action: action, token: U.store.get(TOKEN_KEY) }, extra || {});
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (res && res.ok) return resolve(res.data);
+          const err = new Error((res && res.error) || 'No response from server.');
+          err.code = res && res.code;
+          if (err.code === 'AUTH' && action !== 'login') { U.store.del(TOKEN_KEY); onAuthLost(err.message); }
+          reject(err);
+        })
+        .withFailureHandler(function (e) {
+          // Network problems, Google sign-in expiry, or a script crash
+          reject(new Error((e && e.message) || 'Could not reach the server. Check your connection.'));
+        })
+        .api(request);
+    });
+  }
+
+  return {
+    hasToken: () => !!U.store.get(TOKEN_KEY),
+    onAuthLost: fn => { onAuthLost = fn; },
+    login: async function (passcode) {
+      const data = await call('login', { passcode: passcode });
+      U.store.set(TOKEN_KEY, data.token);
+    },
+    logout: async function () {
+      try { await call('logout'); } catch (e) { /* token may already be gone */ }
+      U.store.del(TOKEN_KEY);
+    },
+    bootstrap: () => call('bootstrap'),
+    getExpenses: () => call('getExpenses'),
+    addExpense: payload => call('addExpense', { payload: payload }),
+    updateExpense: payload => call('updateExpense', { payload: payload }),
+  };
+})();
+
+/* =====================================================================
+ * Store — data shared by all pages, loaded once after sign-in.
+ * ===================================================================== */
+const Store = {
+  categories: [],   // [{ name, subcategories: [] }]
+  lists: { cities: [], warehouses: [], departments: [], paymentModes: [] },
+  expenses: [],     // newest first
+
+  sortExpenses() {
+    this.expenses.sort((a, b) => (b.date + b.id).localeCompare(a.date + a.id));
+  },
+  upsert(exp) {
+    const i = this.expenses.findIndex(e => e.id === exp.id);
+    if (i === -1) this.expenses.push(exp); else this.expenses[i] = exp;
+    this.sortExpenses();
+  },
+  categoryNames() { return this.categories.map(c => c.name); },
+  subcategoriesOf(name) { const c = this.categories.find(c => c.name === name); return c ? c.subcategories : []; },
+  /** Warehouses for a city; warehouses without a city are allowed everywhere. */
+  warehousesFor(city) {
+    return this.lists.warehouses.filter(w => !city || !w.city || w.city === city).map(w => w.name);
+  },
+  allWarehouseNames() { return this.lists.warehouses.map(w => w.name); },
+};
+</script>

@@ -1,0 +1,102 @@
+<script>
+/* =====================================================================
+ * App — sign-in, loading data, and switching between pages.
+ * ===================================================================== */
+const App = (function () {
+  const VIEWS = {
+    dashboard: { title: 'Dashboard',   sub: 'Overview of company expenses',              render: () => Dashboard.render() },
+    add:       { title: 'Add Expense', sub: 'What did you spend on? Pick a type or search.', render: () => AddExpense.render() },
+    expenses:  { title: 'All Expenses', sub: 'Search, filter, view and edit expenses',     render: () => { Expenses.init(); Expenses.render(); } },
+    reports:   { title: 'Reports',     sub: 'Summaries with CSV and Excel export',          render: () => { Reports.init(); Reports.render(); } },
+  };
+  let current = 'dashboard';
+  let loaded = false;
+
+  /* ---------- Sign in / out ---------- */
+  function showLogin(message) {
+    U.$('#app').hidden = true;
+    U.$('#login-screen').hidden = false;
+    const err = U.$('#login-error');
+    err.textContent = message || '';
+    err.hidden = !message;
+    U.$('#login-passcode').value = '';
+    setTimeout(() => U.$('#login-passcode').focus(), 50);
+  }
+
+  U.$('#login-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = U.$('#login-btn');
+    const pass = U.$('#login-passcode').value;
+    if (!pass) return;
+    U.busy(btn, true);
+    U.$('#login-error').hidden = true;
+    try {
+      await Api.login(pass);
+      U.$('#login-screen').hidden = true;
+      await loadData();
+    } catch (err) {
+      showLogin(err.message);
+    } finally {
+      U.busy(btn, false);
+    }
+  });
+
+  U.$('#logout-btn').addEventListener('click', async () => {
+    await Api.logout();
+    loaded = false;
+    Store.expenses = [];
+    showLogin();
+  });
+
+  Api.onAuthLost(msg => { loaded = false; Modal.close(); showLogin(msg); });
+
+  /* ---------- Data ---------- */
+  async function loadData() {
+    U.loader(true, 'Loading expenses…');
+    try {
+      const results = await Promise.all([Api.bootstrap(), Api.getExpenses()]);
+      Store.categories = results[0].categories;
+      Store.lists = results[0].lists;
+      Store.expenses = results[1];
+      Store.sortExpenses();
+      loaded = true;
+      U.$('#app').hidden = false;
+      AddExpense.reset(); // a half-filled Add form would still show the old dropdown lists
+      show(current);
+    } catch (err) {
+      if (err.code !== 'AUTH') { U.$('#app').hidden = false; U.toast(err.message, 'error'); }
+    } finally {
+      U.loader(false);
+    }
+  }
+
+  U.$('#refresh-btn').addEventListener('click', async () => {
+    await loadData();
+    if (loaded) U.toast('Data refreshed from Google Sheets.', 'success');
+  });
+
+  /** Called after a save so every page shows the new numbers. */
+  function dataChanged() { if (current !== 'add') VIEWS[current].render(); }
+
+  /* ---------- Navigation ---------- */
+  function show(view) {
+    current = VIEWS[view] ? view : 'dashboard';
+    U.$$('.view').forEach(v => { v.hidden = v.id !== 'view-' + current; });
+    U.$$('.nav-item').forEach(a => a.classList.toggle('active', a.dataset.view === current));
+    U.$('#page-title').textContent = VIEWS[current].title;
+    U.$('#page-sub').textContent = VIEWS[current].sub;
+    U.$('#app').classList.remove('menu-open');
+    if (loaded) VIEWS[current].render();
+    window.scrollTo(0, 0);
+  }
+
+  U.$$('.nav-item').forEach(a => a.addEventListener('click', e => { e.preventDefault(); show(a.dataset.view); }));
+  U.$('#menu-btn').addEventListener('click', () => U.$('#app').classList.add('menu-open'));
+  U.$('#sidebar-backdrop').addEventListener('click', () => U.$('#app').classList.remove('menu-open'));
+
+  /* ---------- Start ---------- */
+  if (Api.hasToken()) loadData(); else showLogin();
+
+  return { dataChanged, show };
+})();
+</script>

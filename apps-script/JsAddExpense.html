@@ -1,0 +1,207 @@
+<script>
+/* =====================================================================
+ * AddExpense — the tile picker flow on the "Add Expense" page.
+ *   Step 1: pick a category tile (or a Recent one, or search)
+ *   Step 2: pick its type, if the category has types
+ *   Step 3: fill only the remaining details (ExpenseForm with a preset)
+ * Tiles are built from the Categories sheet, so new rows appear automatically.
+ * ===================================================================== */
+const AddExpense = (function () {
+  const RECENT_KEY = 'sn_exp_recent';
+  const RECENT_MAX = 4;
+  let items = [];        // what the current tiles / results / chips point to, by index
+  let bound = false;
+
+  /* ---------- Icons: chosen by keywords in the category name ---------- */
+  const ICONS = {
+    home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
+    people: 'M16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 2c-2.3 0-7 1.2-7 3.5V19h14v-2.5C15 14.2 10.3 13 8 13zm8 0c-.3 0-.6 0-1 .1 1.2.8 2 2 2 3.4V19h6v-2.5c0-2.3-4.7-3.5-7-3.5z',
+    bolt: 'M7 2v11h3v9l7-12h-4l4-8z',
+    cup: 'M18.5 3H6v10a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-3h.5a3.5 3.5 0 0 0 0-7zm0 5H18V5h.5a1.5 1.5 0 0 1 0 3zM4 19h16v2H4z',
+    crane: 'M3 21h8v-2H9V8h7l2 3h2l-3-5H9V3H7v16H5v2zm13-6v4h2v-4l1-2h-4z',
+    box: 'M21 7l-9-5-9 5v10l9 5 9-5V7zm-9 2.2L6.2 6 12 3.8 17.8 6 12 9.2z',
+    pen: 'M3 17.2V21h3.8L17.8 9.9l-3.7-3.7L3 17.2zM20.7 7a1 1 0 0 0 0-1.4l-2.3-2.3a1 1 0 0 0-1.4 0l-1.8 1.8 3.7 3.7L20.7 7z',
+    cam: 'M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z',
+    laptop: 'M20 18a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z',
+    chair: 'M7 13V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8h2v2h-1v6h-2v-6H8v6H6v-6H5v-2h2z',
+    pallet: 'M2 18h20v2H2zm2-4h16v3H4zm2-9h12v8H6z',
+    battery: 'M15.7 4H14V2h-4v2H8.3A1.3 1.3 0 0 0 7 5.3v15.4C7 21.4 7.6 22 8.3 22h7.4c.7 0 1.3-.6 1.3-1.3V5.3C17 4.6 16.4 4 15.7 4zM11 20v-5.5H9L13 7v5.5h2L11 20z',
+    shield: 'M12 1L3 5v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V5l-9-4z',
+    truck: 'M20 8h-3V4H3a2 2 0 0 0-2 2v11h2a3 3 0 0 0 6 0h6a3 3 0 0 0 6 0h2v-5l-3-4zM6 18.5A1.5 1.5 0 1 1 6 15.5a1.5 1.5 0 0 1 0 3zm13.5-9 2 2.5H17V9.5h2.5zM18 18.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z',
+    route: 'M19 15.2V5a3 3 0 0 0-6 0v14a1 1 0 0 1-2 0V8.8a3 3 0 1 0-2 0V19a3 3 0 0 0 6 0V5a1 1 0 0 1 2 0v10.2a3 3 0 1 0 2 0z',
+    wrench: 'M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z',
+    building: 'M12 7V3H2v18h20V7H12zM6 19H4v-2h2v2zm0-4H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 12H8v-2h2v2zm0-4H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 12h-8v-2h2v-2h-2v-2h2v-2h-2V9h8v10z',
+    dots: 'M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm12 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
+    plus: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z',
+    tag: 'M21.4 11.6l-9-9A2 2 0 0 0 11 2H4a2 2 0 0 0-2 2v7c0 .6.2 1.1.6 1.4l9 9a2 2 0 0 0 2.8 0l7-7a2 2 0 0 0 0-2.8zM5.5 7A1.5 1.5 0 1 1 7 5.5 1.5 1.5 0 0 1 5.5 7z',
+  };
+  const ICON_RULES = [
+    [/rent/i, 'home'], [/labou?r|manpower|salary|wage/i, 'people'], [/electric|wi-?fi|power|internet/i, 'bolt'],
+    [/water|tea|coffee|pantry|food/i, 'cup'], [/crane/i, 'crane'], [/packag/i, 'box'], [/stationery|pest/i, 'pen'],
+    [/cctv|camera/i, 'cam'], [/\bit\b|laptop|mobile|computer/i, 'laptop'], [/furniture/i, 'chair'],
+    [/material handling|pallet|rack/i, 'pallet'], [/\bups\b|batter/i, 'battery'], [/insurance/i, 'shield'],
+    [/vehicle|truck/i, 'truck'], [/logistic|transport|shifting|delivery/i, 'route'], [/repair|maintenance/i, 'wrench'],
+    [/fixed asset|asset/i, 'building'], [/other/i, 'dots'],
+  ];
+  const iconFor = name => { const r = ICON_RULES.find(x => x[0].test(name)); return r ? r[1] : 'tag'; };
+  const svg = key => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + ICONS[key] + '"/></svg>';
+  const tileIcon = name => '<span class="tile-icon">' + svg(iconFor(name)) + '</span>';
+
+  /** The category used by the "Not listed?" tile: the first one whose name starts with "Other". */
+  const otherCategory = () => Store.categories.find(c => /^other/i.test(c.name));
+
+  /* ---------- Recent (kept per browser) ---------- */
+  function readRecent() {
+    try {
+      const list = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+      // keep only choices that still exist in the Categories sheet
+      return list.filter(r => {
+        const subs = Store.categories.some(c => c.name === r.c) ? Store.subcategoriesOf(r.c) : null;
+        return subs && (r.s ? subs.indexOf(r.s) !== -1 : !subs.length);
+      });
+    } catch (e) { return []; }
+  }
+  function saveRecent(c, s) {
+    const list = readRecent().filter(r => !(r.c === c && r.s === s));
+    list.unshift({ c: c, s: s });
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, RECENT_MAX))); } catch (e) { /* ignore */ }
+  }
+
+  /* ---------- Steps ---------- */
+  function showStep(id) {
+    ['pick-home', 'pick-results', 'pick-detail'].forEach(s => { U.$('#' + s).hidden = s !== id; });
+  }
+
+  /** Every clickable element carries data-i pointing into `items`. */
+  function register(item) { items.push(item); return items.length - 1; }
+
+  function renderHome() {
+    items = [];
+    const recent = readRecent();
+    U.$('#pick-recent-block').hidden = !recent.length;
+    U.$('#pick-recent').innerHTML = recent.map(r =>
+      '<button type="button" class="recent-chip" data-i="' + register({ c: r.c, s: r.s, go: 'form' }) + '">' + tileIcon(r.c) +
+      '<span><b>' + U.esc(r.s || r.c) + '</b>' + (r.s ? '<small>' + U.esc(r.c) + '</small>' : '') + '</span></button>'
+    ).join('');
+
+    const other = otherCategory();
+    U.$('#pick-tiles').innerHTML = Store.categories.map(c =>
+      '<button type="button" class="tile" data-i="' + register({ c: c.name, s: '', go: 'auto' }) + '">' + tileIcon(c.name) +
+      '<span><span class="tile-name">' + U.esc(c.name) + '</span><br><span class="tile-hint">' +
+      (c.subcategories.length ? c.subcategories.length + ' types' : 'Direct entry') + '</span></span></button>'
+    ).join('') + (other
+      ? '<button type="button" class="tile tile--other" data-i="' + register({ c: other.name, s: '', go: 'auto' }) + '">' +
+        '<span class="tile-icon">' + svg('plus') + '</span><span><span class="tile-name">Not listed?</span><br>' +
+        '<span class="tile-hint">Pooja, AC service… saved under ' + U.esc(other.name) + '</span></span></button>'
+      : '');
+    if (!Store.categories.length) U.$('#pick-tiles').innerHTML = '<p class="muted">No active categories. Add rows to the Categories sheet.</p>';
+    showStep('pick-home');
+  }
+
+  function renderResults(q) {
+    items = [];
+    const needle = q.toLowerCase();
+    const re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'i');
+    const hl = t => U.esc(t).replace(re, '<mark>$1</mark>');
+    const out = [];
+    Store.categories.forEach(c => {
+      if (c.name.toLowerCase().indexOf(needle) !== -1) out.push({ c: c.name, s: '', go: 'auto' });
+      c.subcategories.forEach(s => { if (s.toLowerCase().indexOf(needle) !== -1) out.push({ c: c.name, s: s, go: 'form' }); });
+    });
+    const list = out.slice(0, 12);
+    const other = otherCategory();
+    U.$('#pick-results-list').innerHTML = list.length
+      ? list.map((r, n) => '<button type="button" class="result' + (n === 0 ? ' active' : '') + '" data-i="' + register(r) + '">' + tileIcon(r.c) +
+          '<span><b>' + hl(r.s || r.c) + '</b><small>' + (r.s ? hl(r.c) : (Store.subcategoriesOf(r.c).length ? 'Choose a type' : 'Direct entry')) + '</small></span></button>').join('')
+      : '<p class="muted">No expense type matches “' + U.esc(q) + '”.</p>' + (other
+          ? '<button type="button" class="result" data-i="' + register({ c: other.name, s: q, go: 'form' }) + '">' +
+            '<span class="tile-icon">' + svg('plus') + '</span><span><b>Record it under ' + U.esc(other.name) + '</b>' +
+            '<small>Expense name: “' + U.esc(q) + '”</small></span></button>' : '');
+    showStep('pick-results');
+  }
+
+  /** Category chosen: show its types, or go straight to the form when it has none. */
+  function choose(item) {
+    const subs = Store.subcategoriesOf(item.c);
+    if (item.go === 'form' || item.s || !subs.length) return openForm(item.c, item.s);
+    items = [];
+    renderCrumb(item.c, '');
+    U.$('#pick-types').hidden = false;
+    U.$('#pick-types-label').textContent = 'Which ' + item.c + ' expense?';
+    U.$('#pick-type-chips').innerHTML = subs.map(s =>
+      '<button type="button" class="type-chip" data-i="' + register({ c: item.c, s: s, go: 'form' }) + '">' + U.esc(s) + '</button>').join('');
+    U.$('#add-form-host').innerHTML = '';
+    showStep('pick-detail');
+    const first = U.$('#pick-type-chips .type-chip'); if (first) first.focus();
+  }
+
+  function openForm(c, s) {
+    items = [];
+    renderCrumb(c, s);
+    U.$('#pick-types').hidden = true;
+    showStep('pick-detail');
+    ExpenseForm.render(U.$('#add-form-host'), {
+      preset: { mainCategory: c, subcategory: s },
+      onCancel: reset,
+      onSaved: saved => {
+        saveRecent(c, Store.subcategoriesOf(c).length ? s : ''); // "Other" names aren't fixed types
+        U.toast('Expense ' + saved.id + ' saved to Google Sheets.', 'success');
+        reset();
+      },
+    });
+    const nameBox = U.$('#add-form-host input[name=otherName]');
+    const first = nameBox && !nameBox.closest('.field').hidden && !nameBox.value ? nameBox : U.$('#add-form-host input[name=description]');
+    if (first) first.focus();
+  }
+
+  function renderCrumb(c, s) {
+    const subs = Store.subcategoriesOf(c);
+    U.$('#pick-crumb').innerHTML =
+      tileIcon(c) +
+      (s && subs.length
+        ? '<button type="button" class="pill link-pill" data-i="' + register({ c: c, s: '', go: 'types' }) + '" title="Change type">' + U.esc(c) + '</button>' +
+          '<span class="muted">›</span><span class="pill pill--peach">' + U.esc(s) + '</span>'
+        : '<span class="pill">' + U.esc(c) + '</span>') +
+      '<button type="button" class="link-btn" data-act="change">Change</button>';
+  }
+
+  function reset() {
+    U.$('#pick-q').value = '';
+    U.$('#add-form-host').innerHTML = '';
+    renderHome();
+    window.scrollTo(0, 0);
+  }
+
+  /* ---------- Events (bound once) ---------- */
+  function bind() {
+    if (bound) return;
+    bound = true;
+    U.$('#view-add').addEventListener('click', e => {
+      if (e.target.closest('[data-act="change"]')) return reset();
+      const el = e.target.closest('[data-i]');
+      if (!el || !U.$('#view-add').contains(el)) return;
+      const item = items[Number(el.dataset.i)];
+      if (!item) return;
+      U.$('#pick-q').value = '';
+      if (item.go === 'types') choose({ c: item.c, s: '', go: 'auto' }); else choose(item);
+    });
+    let t;
+    U.$('#pick-q').addEventListener('input', e => {
+      clearTimeout(t);
+      t = setTimeout(() => { const q = e.target.value.trim(); if (q) renderResults(q); else renderHome(); }, 120);
+    });
+    U.$('#pick-q').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); const first = U.$('#pick-results-list [data-i]'); if (first && !U.$('#pick-results').hidden) first.click(); }
+      if (e.key === 'Escape') reset();
+    });
+  }
+
+  /** Called when the page opens. Keeps a half-filled form if the user comes back to it. */
+  function render() {
+    bind();
+    if (U.$('#pick-detail').hidden || !U.$('#add-form-host form')) reset();
+  }
+
+  return { render, reset };
+})();
+</script>

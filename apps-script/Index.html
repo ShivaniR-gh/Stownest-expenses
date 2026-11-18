@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StowNest Expense Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <?!= include('Styles') ?>
+</head>
+<body>
+
+  <!-- ============ Login ============ -->
+  <section id="login-screen" class="login" hidden>
+    <form id="login-form" class="login-card" autocomplete="off">
+      <div class="brand brand--dark">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6 3.6 7.1v9.8l8.4 4.5 8.4-4.5V7.1L12 2.6z"/><path d="M3.6 7.1 12 11.6l8.4-4.5M12 11.6v9.8"/><path d="m7.8 4.85 8.4 4.5v3.4"/></svg></span>
+        <div>
+          <div class="brand-name">StowNest</div>
+          <div class="brand-sub">Expense Manager</div>
+        </div>
+      </div>
+      <h1>Sign in</h1>
+      <p class="muted">Enter the shared team passcode to continue.</p>
+      <label class="field">
+        <span>Passcode</span>
+        <input type="password" id="login-passcode" required autofocus>
+      </label>
+      <p id="login-error" class="form-error" hidden></p>
+      <button type="submit" class="btn btn-primary btn-block" id="login-btn">Sign in</button>
+    </form>
+  </section>
+
+  <!-- ============ App shell ============ -->
+  <div id="app" class="shell" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6 3.6 7.1v9.8l8.4 4.5 8.4-4.5V7.1L12 2.6z"/><path d="M3.6 7.1 12 11.6l8.4-4.5M12 11.6v9.8"/><path d="m7.8 4.85 8.4 4.5v3.4"/></svg></span>
+        <div>
+          <div class="brand-name">StowNest</div>
+          <div class="brand-sub">Expense Manager</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <a href="#" class="nav-item" data-view="dashboard">
+          <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+          Dashboard
+        </a>
+        <a href="#" class="nav-item" data-view="add">
+          <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          Add Expense
+        </a>
+        <a href="#" class="nav-item" data-view="expenses">
+          <svg viewBox="0 0 24 24"><path d="M3 5h18v2H3V5zm0 6h18v2H3v-2zm0 6h18v2H3v-2z"/></svg>
+          All Expenses
+        </a>
+        <a href="#" class="nav-item" data-view="reports">
+          <svg viewBox="0 0 24 24"><path d="M5 9h3v10H5V9zm5.5-4h3v14h-3V5zM16 13h3v6h-3v-6z"/></svg>
+          Reports
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <button class="btn-link-light" id="refresh-btn" title="Reload data from Google Sheets">↻ Refresh data</button>
+        <button class="btn-link-light" id="logout-btn">Sign out</button>
+      </div>
+    </aside>
+    <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn menu-btn" id="menu-btn" aria-label="Open menu">
+          <svg viewBox="0 0 24 24"><path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg>
+        </button>
+        <div>
+          <h1 class="page-title" id="page-title">Dashboard</h1>
+          <p class="page-sub" id="page-sub"></p>
+        </div>
+      </header>
+
+      <div class="content">
+        <!-- Dashboard -->
+        <section class="view" id="view-dashboard">
+          <div class="dash-toolbar">
+            <div class="seg" id="dash-period" role="tablist" aria-label="Period">
+              <button type="button" data-period="this-month">This month</button>
+              <button type="button" data-period="last-month">Last month</button>
+              <button type="button" data-period="this-fy">This FY</button>
+              <button type="button" data-period="">All time</button>
+            </div>
+            <span class="muted small" id="dash-range"></span>
+          </div>
+
+          <div class="kpis">
+            <div class="kpi kpi--peri">
+              <span class="kpi-label">Spent</span>
+              <span class="kpi-value" id="kpi-spent">–</span>
+              <span class="kpi-sub" id="kpi-spent-sub"></span>
+            </div>
+            <div class="kpi">
+              <span class="kpi-label">Expenses</span>
+              <span class="kpi-value" id="kpi-count">–</span>
+              <span class="kpi-sub" id="kpi-count-sub"></span>
+            </div>
+            <div class="kpi">
+              <span class="kpi-label">Top category</span>
+              <span class="kpi-value kpi-value--text" id="kpi-top">–</span>
+              <span class="kpi-sub" id="kpi-top-sub"></span>
+            </div>
+            <div class="kpi" id="kpi-bills-card">
+              <span class="kpi-label">Missing bills</span>
+              <span class="kpi-value" id="kpi-bills">–</span>
+              <span class="kpi-sub" id="kpi-bills-sub"></span>
+            </div>
+          </div>
+
+          <div class="dash-grid">
+            <div class="card">
+              <div class="card-head"><h2>Monthly trend</h2><span class="muted" id="trend-note">Last 12 months</span></div>
+              <div id="chart-monthly" class="chart"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>By category</h2></div>
+              <div id="chart-category" class="chart"></div>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-head"><h2>By location</h2></div>
+              <div id="chart-warehouse" class="chart"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>Recently added</h2><a href="#" class="link-btn" id="dash-see-all">See all</a></div>
+              <div id="dash-recent"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Add Expense -->
+        <section class="view" id="view-add">
+          <label class="picker-search">
+            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 14 15.5l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg>
+            <input type="search" id="pick-q" placeholder="Search: laptop, rent, crane, pooja…" autocomplete="off" aria-label="Search expense type">
+          </label>
+
+          <!-- Step 1: recent + tiles -->
+          <div class="picker-step" id="pick-home">
+            <div class="picker-block" id="pick-recent-block" hidden>
+              <p class="label">Recent</p>
+              <div class="recent-row" id="pick-recent"></div>
+            </div>
+            <div class="picker-block">
+              <p class="label">Expense type</p>
+              <div class="tile-grid" id="pick-tiles"></div>
+            </div>
+          </div>
+
+          <!-- Search results -->
+          <div class="picker-step" id="pick-results" hidden>
+            <p class="label">Matches</p>
+            <div class="results" id="pick-results-list"></div>
+          </div>
+
+          <!-- Step 2 (type) + Step 3 (details form) -->
+          <div class="picker-step card form-card" id="pick-detail" hidden>
+            <div class="crumb" id="pick-crumb"></div>
+            <div id="pick-types" hidden>
+              <p class="label" id="pick-types-label"></p>
+              <div class="type-chips" id="pick-type-chips"></div>
+            </div>
+            <div id="add-form-host"></div>
+          </div>
+        </section>
+
+        <!-- All Expenses -->
+        <section class="view" id="view-expenses">
+          <div class="card">
+            <div class="toolbar" id="exp-filters">
+              <label class="tb-search"><svg viewBox="0 0 24 24"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 14 15.5l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg><input type="search" data-f="q" placeholder="Search ID, description, vendor, invoice…"></label>
+              <div class="pop" data-pop="date">
+                <button type="button" class="tb-btn" data-toggle>
+                  <svg viewBox="0 0 24 24"><path d="M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 16H5V9h14v11z"/></svg>
+                  <span class="tb-date-label">All dates</span><span class="tb-caret">▾</span>
+                </button>
+                <div class="pop-panel">
+                  <div class="presets">
+                    <button type="button" data-preset="">All dates</button>
+                    <button type="button" data-preset="this-month">This month</button>
+                    <button type="button" data-preset="last-month">Last month</button>
+                    <button type="button" data-preset="last-3">Last 3 months</button>
+                    <button type="button" data-preset="this-fy">This financial year</button>
+                    <button type="button" data-preset="last-fy">Last financial year</button>
+                  </div>
+                  <div class="pop-sep">Custom range</div>
+                  <div class="pop-row">
+                    <label class="field"><span>From</span><input type="date" data-f="from"></label>
+                    <label class="field"><span>To</span><input type="date" data-f="to"></label>
+                  </div>
+                </div>
+              </div>
+              <div class="pop" data-pop="more">
+                <button type="button" class="tb-btn" data-toggle>
+                  <svg viewBox="0 0 24 24"><path d="M3 5h18v2H3V5zm4 6h10v2H7v-2zm3 6h4v2h-4v-2z"/></svg>
+                  Filters <span class="tb-count" hidden></span>
+                </button>
+                <div class="pop-panel pop-panel--grid">
+                  <label class="field"><span>Category</span><select data-f="category"></select></label>
+                  <label class="field"><span>City</span><select data-f="city"></select></label>
+                  <label class="field"><span>Warehouse / Office</span><select data-f="warehouse"></select></label>
+                  <label class="field"><span>Department</span><select data-f="department"></select></label>
+                  <div class="pop-foot"><button type="button" class="link-btn" data-clear>Clear filters</button><button type="button" class="btn btn-primary btn-sm" data-done>Done</button></div>
+                </div>
+              </div>
+              
+            </div>
+            <div class="chip-row" id="exp-chips"></div>
+            <div class="table-meta">
+              <span><span id="exp-count" class="muted"></span></span>
+              <span class="table-total-wrap"><span class="muted">Total</span> <span id="exp-total" class="table-total"></span></span>
+            </div>
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Expense</th><th>Category</th><th>Location</th><th>Description / Vendor</th>
+                    <th>Payment / Invoice</th><th class="num">Amount</th><th class="center">Bill</th><th></th>
+                  </tr>
+                </thead>
+                <tbody id="exp-body"></tbody>
+              </table>
+            </div>
+            <div class="pager" id="exp-pager"></div>
+          </div>
+        </section>
+
+        <!-- Reports -->
+        <section class="view" id="view-reports">
+          <div class="card">
+            <div class="tabs" id="rep-tabs">
+              <button class="tab" data-type="monthly">Monthly</button>
+              <button class="tab" data-type="category">Category-wise</button>
+              <button class="tab" data-type="warehouse">Warehouse-wise</button>
+              <button class="tab" data-type="date">Date-wise</button>
+            </div>
+            <div class="toolbar" id="rep-filters">
+              
+              <div class="pop" data-pop="date">
+                <button type="button" class="tb-btn" data-toggle>
+                  <svg viewBox="0 0 24 24"><path d="M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 16H5V9h14v11z"/></svg>
+                  <span class="tb-date-label">All dates</span><span class="tb-caret">▾</span>
+                </button>
+                <div class="pop-panel">
+                  <div class="presets">
+                    <button type="button" data-preset="">All dates</button>
+                    <button type="button" data-preset="this-month">This month</button>
+                    <button type="button" data-preset="last-month">Last month</button>
+                    <button type="button" data-preset="last-3">Last 3 months</button>
+                    <button type="button" data-preset="this-fy">This financial year</button>
+                    <button type="button" data-preset="last-fy">Last financial year</button>
+                  </div>
+                  <div class="pop-sep">Custom range</div>
+                  <div class="pop-row">
+                    <label class="field"><span>From</span><input type="date" data-f="from"></label>
+                    <label class="field"><span>To</span><input type="date" data-f="to"></label>
+                  </div>
+                </div>
+              </div>
+              <div class="pop" data-pop="more">
+                <button type="button" class="tb-btn" data-toggle>
+                  <svg viewBox="0 0 24 24"><path d="M3 5h18v2H3V5zm4 6h10v2H7v-2zm3 6h4v2h-4v-2z"/></svg>
+                  Filters <span class="tb-count" hidden></span>
+                </button>
+                <div class="pop-panel pop-panel--grid">
+                  <label class="field"><span>Category</span><select data-f="category"></select></label>
+                  <label class="field"><span>City</span><select data-f="city"></select></label>
+                  <label class="field"><span>Warehouse / Office</span><select data-f="warehouse"></select></label>
+                  
+                  <div class="pop-foot"><button type="button" class="link-btn" data-clear>Clear filters</button><button type="button" class="btn btn-primary btn-sm" data-done>Done</button></div>
+                </div>
+              </div>
+              <div class="tb-spacer"></div>
+              <button class="btn btn-ghost btn-sm" id="rep-csv" type="button">⬇ CSV</button>
+              <button class="btn btn-primary btn-sm" id="rep-xlsx" type="button">⬇ Excel</button>
+            </div>
+            <div class="chip-row" id="rep-chips"></div>
+            <div class="table-meta">
+              <span id="rep-summary" class="muted"></span>
+            </div>
+            <div class="table-wrap">
+              <table class="table">
+                <thead id="rep-head"></thead>
+                <tbody id="rep-body"></tbody>
+                <tfoot id="rep-foot"></tfoot>
+              </table>
+            </div>
+            <p class="muted small">CSV contains the summary shown above. Excel contains the summary plus every matching expense on a second sheet.</p>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- ============ Modal (details / edit) ============ -->
+  <div class="modal" id="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2 id="modal-title"></h2>
+        <button class="icon-btn" data-close aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ============ Toasts + loader ============ -->
+  <div class="toasts" id="toasts"></div>
+  <div class="loader" id="loader" hidden><div class="spinner"></div><span id="loader-text">Loading…</span></div>
+
+  <?!= include('JsUtils') ?>
+  <?!= include('JsApi') ?>
+  <?!= include('JsExpenseForm') ?>
+  <?!= include('JsDashboard') ?>
+  <?!= include('JsExpenses') ?>
+  <?!= include('JsReports') ?>
+  <?!= include('JsAddExpense') ?>
+  <?!= include('JsApp') ?>
+</body>
+</html>

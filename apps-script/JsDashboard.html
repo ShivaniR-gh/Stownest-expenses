@@ -1,0 +1,154 @@
+<script>
+/* =====================================================================
+ * Dashboard — period switch, KPI cards, trend, category donut,
+ * location bars and recently added. Everything is calculated from
+ * Store.expenses in the browser; charts are plain HTML/CSS (no library).
+ * ===================================================================== */
+const Dashboard = (function () {
+  // Categorical palette (periwinkle, peach, rust, navy, sage, mustard, rose, slate)
+  const PALETTE = ['#8ea8dd', '#e9a46a', '#a3440f', '#1b2234', '#7fb3a3', '#c9a227', '#d98aa0', '#9aa1ad'];
+  const PERIOD_KEY = 'sn_exp_dash_period';
+  const PREVIOUS = { 'this-month': 'last-month', 'last-month': 'month-before', 'this-fy': 'last-fy' };
+  const PREVIOUS_LABEL = { 'this-month': 'last month', 'last-month': 'the month before', 'this-fy': 'last FY' };
+  let period = (function () { try { const v = localStorage.getItem(PERIOD_KEY); return v === null ? 'this-month' : v; } catch (e) { return 'this-month'; } })();
+  let bound = false;
+
+  function range(key) {
+    if (key === 'month-before') {
+      const now = new Date(), d1 = new Date(now.getFullYear(), now.getMonth() - 2, 1), d2 = new Date(now.getFullYear(), now.getMonth() - 1, 0);
+      const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      return [iso(d1), iso(d2)];
+    }
+    return Filters.presetRange(key);
+  }
+  const inRange = (rows, r) => rows.filter(x => (!r[0] || x.date >= r[0]) && (!r[1] || x.date <= r[1]));
+
+  function bind() {
+    if (bound) return;
+    bound = true;
+    U.$('#dash-period').addEventListener('click', e => {
+      const b = e.target.closest('[data-period]');
+      if (!b) return;
+      period = b.dataset.period;
+      try { localStorage.setItem(PERIOD_KEY, period); } catch (err) { /* ignore */ }
+      render();
+    });
+    U.$('#dash-recent').addEventListener('click', e => {
+      const row = e.target.closest('[data-id]');
+      const exp = row && Store.expenses.find(x => x.id === row.dataset.id);
+      if (exp) Expenses.showDetails(exp);
+    });
+    U.$('#dash-see-all').addEventListener('click', e => { e.preventDefault(); App.show('expenses'); });
+  }
+
+  function render() {
+    bind();
+    U.$$('#dash-period button').forEach(b => b.classList.toggle('active', b.dataset.period === period));
+    const r = range(period);
+    U.$('#dash-range').textContent = period ? U.dateLabel(r[0]) + ' – ' + U.dateLabel(r[1]) : 'All recorded expenses';
+    const rows = inRange(Store.expenses, r);
+
+    renderKpis(rows);
+    renderTrend(r);
+    renderDonut(U.groupSum(rows, x => x.mainCategory));
+    renderBars('#chart-warehouse', U.groupSum(rows, x => x.warehouse), 6);
+    renderRecent();
+  }
+
+  /* ---------- KPI cards ---------- */
+  function renderKpis(rows) {
+    const total = U.sum(rows);
+    U.$('#kpi-spent').textContent = U.money(total);
+    const prevKey = PREVIOUS[period];
+    let sub = 'Across all recorded expenses';
+    if (prevKey) {
+      const prev = U.sum(inRange(Store.expenses, range(prevKey)));
+      if (!prev) sub = 'Nothing recorded ' + PREVIOUS_LABEL[period];
+      else {
+        const pct = Math.round(((total - prev) / prev) * 100);
+        const cls = pct > 0 ? 'up' : pct < 0 ? 'down' : '';
+        sub = '<span class="trend-pill ' + cls + '">' + (pct > 0 ? '▲ ' : pct < 0 ? '▼ ' : '') + Math.abs(pct) + '%</span> vs ' +
+          PREVIOUS_LABEL[period] + ' (' + U.moneyCompact(prev) + ')';
+      }
+    }
+    U.$('#kpi-spent-sub').innerHTML = sub;
+
+    U.$('#kpi-count').textContent = rows.length.toLocaleString('en-IN');
+    U.$('#kpi-count-sub').textContent = rows.length ? 'Average ' + U.moneyShort(total / rows.length) + ' each' : 'No expenses in this period';
+
+    const top = U.groupSum(rows, x => x.mainCategory)[0];
+    U.$('#kpi-top').textContent = top ? top.key : '–';
+    U.$('#kpi-top').title = top ? top.key : '';
+    U.$('#kpi-top-sub').textContent = top ? U.money(top.total) + ' · ' + Math.round((top.total / total) * 100) + '% of spend' : 'No expenses in this period';
+
+    const missing = rows.filter(x => !x.billLink).length;
+    U.$('#kpi-bills').textContent = missing;
+    U.$('#kpi-bills-sub').textContent = rows.length ? (missing ? 'of ' + rows.length + ' expenses have no bill attached' : 'Every expense has a bill 👍') : '—';
+    U.$('#kpi-bills-card').classList.toggle('kpi--peach', missing > 0);
+  }
+
+  /* ---------- Trend: 12 months ending at the period end (or today) ---------- */
+  function renderTrend(r) {
+    const end = r[1] && r[1] < U.today() ? r[1] : U.today();
+    const ey = +end.slice(0, 4), em = +end.slice(5, 7) - 1;
+    const keys = [];
+    for (let i = 11; i >= 0; i--) { const d = new Date(ey, em - i, 1); keys.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')); }
+    const totals = {};
+    Store.expenses.forEach(x => { const k = U.monthKey(x.date); totals[k] = (totals[k] || 0) + Number(x.amount); });
+    const max = Math.max.apply(null, keys.map(k => totals[k] || 0));
+    const host = U.$('#chart-monthly');
+    if (!max) { host.innerHTML = '<div class="chart-empty">No expenses in the last 12 months yet.</div>'; return; }
+    const inPeriod = k => (!r[0] || k >= r[0].slice(0, 7)) && (!r[1] || k <= r[1].slice(0, 7));
+    const avg = keys.reduce((s, k) => s + (totals[k] || 0), 0) / keys.filter(k => totals[k]).length;
+    U.$('#trend-note').textContent = 'Avg ' + U.moneyCompact(avg) + ' / active month';
+    host.innerHTML = '<div class="trend">' + keys.map(k => {
+      const v = totals[k] || 0, h = v ? Math.max((v / max) * 100, 3) : 0;
+      return '<div class="tbar' + (period && inPeriod(k) ? ' in' : '') + '">' +
+        '<span class="tbar-val">' + (v ? U.moneyCompact(v) : '') + '</span>' +
+        '<span class="tbar-col" style="height:' + h + '%" title="' + U.esc(U.monthLabel(k) + ': ' + U.money(v)) + '"></span>' +
+        '<span class="tbar-label">' + U.MONTHS[+k.slice(5) - 1] + (k.slice(5) === '01' || k === keys[0] ? ' ' + k.slice(2, 4) : '') + '</span></div>';
+    }).join('') + '</div>';
+  }
+
+  /* ---------- Donut (CSS conic-gradient) ---------- */
+  function renderDonut(groups) {
+    const host = U.$('#chart-category');
+    if (!groups.length) { host.innerHTML = '<div class="chart-empty">No expenses in this period.</div>'; return; }
+    let items = groups;
+    if (groups.length > 6) { const rest = groups.slice(5); items = groups.slice(0, 5).concat([{ key: 'Others (' + rest.length + ')', total: rest.reduce((s, g) => s + g.total, 0) }]); }
+    const total = items.reduce((s, g) => s + g.total, 0);
+    let acc = 0;
+    const stops = items.map((g, i) => { const from = acc; acc += (g.total / total) * 100; return PALETTE[i % PALETTE.length] + ' ' + from + '% ' + acc + '%'; });
+    host.innerHTML = '<div class="donut-wrap"><div class="donut" style="background:conic-gradient(' + stops.join(',') + ')">' +
+      '<div class="donut-center"><b>' + U.moneyCompact(total) + '</b><span>total</span></div></div>' +
+      '<ul class="legend">' + items.map((g, i) =>
+        '<li><i style="background:' + PALETTE[i % PALETTE.length] + '"></i><span class="legend-name" title="' + U.esc(g.key) + '">' + U.esc(g.key) + '</span>' +
+        '<span class="legend-pct">' + Math.round((g.total / total) * 100) + '%</span></li>').join('') + '</ul></div>';
+  }
+
+  /* ---------- Horizontal bars ---------- */
+  function renderBars(selector, groups, topN) {
+    const host = U.$(selector);
+    if (!groups.length) { host.innerHTML = '<div class="chart-empty">No expenses in this period.</div>'; return; }
+    let items = groups;
+    if (groups.length > topN) { const rest = groups.slice(topN - 1); items = groups.slice(0, topN - 1).concat([{ key: 'Others (' + rest.length + ')', total: rest.reduce((s, g) => s + g.total, 0) }]); }
+    const max = items.reduce((m, g) => Math.max(m, g.total), 0) || 1;
+    host.innerHTML = items.map((g, i) =>
+      '<div class="hbar"><span class="hbar-label" title="' + U.esc(g.key) + '"><i class="hbar-dot" style="background:' + PALETTE[i % PALETTE.length] + '"></i>' + U.esc(g.key) + '</span>' +
+      '<span class="hbar-track"><span class="hbar-fill" style="width:' + (g.total / max) * 100 + '%;background:' + PALETTE[i % PALETTE.length] + '"></span></span>' +
+      '<span class="hbar-value">' + U.moneyCompact(g.total) + '</span></div>').join('');
+  }
+
+  /* ---------- Recently added (by Created At, all periods) ---------- */
+  function renderRecent() {
+    const list = Store.expenses.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 6);
+    U.$('#dash-recent').innerHTML = list.length ? '<ul class="recent-list">' + list.map(x =>
+      '<li data-id="' + U.esc(x.id) + '"><div class="rl-main"><b>' + U.esc(x.subcategory || x.mainCategory) + '</b>' +
+      '<span>' + U.esc(x.description) + '</span></div>' +
+      '<div class="rl-side"><b>' + U.money(x.amount) + '</b><span>' + U.esc(U.dateLabel(x.date)) + ' · ' + U.esc(x.city) + '</span></div></li>').join('') + '</ul>'
+      : '<div class="chart-empty">No expenses recorded yet.</div>';
+  }
+
+  return { render };
+})();
+</script>

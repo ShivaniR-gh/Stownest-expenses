@@ -1,0 +1,91 @@
+<script>
+/* =====================================================================
+ * Reports — grouped summaries with CSV / Excel export.
+ * Exports always use exactly the rows the current filters produce.
+ * ===================================================================== */
+const Reports = (function () {
+  let type = 'monthly';
+  let bound = false;
+
+  const TYPES = {
+    monthly:   { title: 'Monthly',        col: 'Month',     key: r => U.monthKey(r.date), label: U.monthLabel, sort: 'keyDesc' },
+    category:  { title: 'Category-wise',  col: 'Category',  key: r => r.mainCategory,     label: k => k,        sort: 'total' },
+    warehouse: { title: 'Warehouse-wise', col: 'Warehouse', key: r => r.warehouse,        label: k => k,        sort: 'total' },
+    date:      { title: 'Date-wise',      col: 'Date',      key: r => r.date,             label: U.dateLabel,   sort: 'keyDesc' },
+  };
+
+  function init() {
+    const bar = U.$('#rep-filters');
+    Filters.populate(bar);
+    if (bound) return;
+    bound = true;
+    Filters.bind(bar, render);
+    U.$('#rep-tabs').addEventListener('click', e => {
+      const t = e.target.closest('[data-type]');
+      if (t) { type = t.dataset.type; render(); }
+    });
+    U.$('#rep-csv').addEventListener('click', exportCsv);
+    U.$('#rep-xlsx').addEventListener('click', exportXlsx);
+  }
+
+  /** Returns { rows, groups, total, filters } for the current tab + filters. */
+  function compute() {
+    const filters = Filters.read(U.$('#rep-filters'));
+    const rows = Filters.apply(Store.expenses, filters);
+    const def = TYPES[type];
+    const groups = U.groupSum(rows, def.key);
+    if (def.sort === 'keyDesc') groups.sort((a, b) => b.key.localeCompare(a.key));
+    return { rows, groups, total: U.sum(rows), filters, def };
+  }
+
+  function render() {
+    U.$$('#rep-tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.type === type));
+    const r = compute();
+    U.$('#rep-summary').textContent = r.def.title + ' report · ' + r.rows.length + ' expenses · ' + Filters.describe(r.filters);
+
+    U.$('#rep-head').innerHTML = '<tr><th>' + r.def.col + '</th><th class="num">Expenses</th><th class="num">Total Amount</th><th>Share</th></tr>';
+    U.$('#rep-body').innerHTML = r.groups.length ? r.groups.map(g => {
+      const pct = r.total ? (g.total / r.total) * 100 : 0;
+      return '<tr><td>' + U.esc(r.def.label(g.key)) + '</td><td class="num">' + g.count + '</td>' +
+        '<td class="num">' + U.money(g.total) + '</td>' +
+        '<td class="nowrap"><span class="share"><i style="width:' + pct + '%"></i></span>' + pct.toFixed(1) + '%</td></tr>';
+    }).join('') : '<tr><td colspan="4" class="empty">No expenses match these filters.</td></tr>';
+    U.$('#rep-foot').innerHTML = r.groups.length
+      ? '<tr><td>Total</td><td class="num">' + r.rows.length + '</td><td class="num">' + U.money(r.total) + '</td><td>100%</td></tr>' : '';
+
+    U.$('#rep-csv').disabled = U.$('#rep-xlsx').disabled = !r.rows.length;
+  }
+
+  function summaryRows(r) {
+    const out = [[r.def.col, 'Expenses', 'Total Amount (INR)', 'Share %']];
+    r.groups.forEach(g => out.push([r.def.label(g.key), g.count, round2(g.total), round2(r.total ? (g.total / r.total) * 100 : 0)]));
+    out.push(['Total', r.rows.length, round2(r.total), 100]);
+    return out;
+  }
+  function detailRows(r) {
+    const out = [['Expense ID', 'Expense Date', 'Main Category', 'Subcategory', 'City', 'Warehouse', 'Department',
+      'Description', 'Amount (INR)', 'Vendor / Supplier', 'Payment Mode', 'Invoice Number', 'Bill Link', 'Remarks']];
+    r.rows.forEach(e => out.push([e.id, e.date, e.mainCategory, e.subcategory, e.city, e.warehouse, e.department,
+      e.description, Number(e.amount), e.vendor, e.paymentMode, e.invoiceNumber, e.billLink, e.remarks]));
+    return out;
+  }
+  const round2 = n => Math.round(n * 100) / 100;
+  const fileBase = () => 'StowNest_' + TYPES[type].title.replace(/\W/g, '') + '_Expenses_' + U.today();
+
+  function exportCsv() {
+    const r = compute();
+    U.download(fileBase() + '.csv', new Blob([U.toCsv(summaryRows(r))], { type: 'text/csv;charset=utf-8' }));
+    U.toast('CSV downloaded.', 'success');
+  }
+  function exportXlsx() {
+    const r = compute();
+    U.download(fileBase() + '.xlsx', U.toXlsx([
+      { name: r.def.title + ' Summary', rows: summaryRows(r) },
+      { name: 'Expenses', rows: detailRows(r) },
+    ]));
+    U.toast('Excel file downloaded.', 'success');
+  }
+
+  return { init, render, compute, summaryRows, detailRows };
+})();
+</script>
